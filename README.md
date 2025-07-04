@@ -159,8 +159,8 @@ CoolKeeper monitoring paused.
 
 Below is the final project in action:
 
-![Wiring](img2.png)
-![Wiring](img1.png)
+![Wiring](images/img2.png)
+![Wiring](images/img1.png)
 
 
 ---
