@@ -1,7 +1,0 @@
-# --- Wi-Fi Data ---
-SSID = "Tele2_20d5e9"
-PASSWORD = "zzmyadnh"
-
-# --- Telegram Data ---
-TELEGRAM_BOT_TOKEN = '7585941863:AAEKEouVoGDlCCtTjbRFSaIi4S0AyULRCJA'
-TELEGRAM_CHAT_ID = 648876888
