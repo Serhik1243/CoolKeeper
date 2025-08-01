@@ -2,35 +2,34 @@
 
 **Author:** Serhii Sydoruk (ss226jh)
 
-CoolKeeper is a simple IoT system that monitors if your fridge door has been left open using a light sensor (LDR). It uses Wi-Fi to connect to the internet and sends real-time alerts via Telegram. It's designed for use with the Raspberry Pi Pico WH and written in MicroPython.
+CoolKeeper is a smart IoT device that alerts you when your fridge door is left open. Using an LDR sensor, it detects light inside the fridge and sends real-time alerts to Telegram via Wi-Fi. Built using the Raspberry Pi Pico WH and written in MicroPython, it's simple, reliable, and useful for preventing energy waste and food spoilage.
 
 ---
 
 ## Objective
 
-I built this device to address a common issue: leaving the fridge door open. Over time, this leads to energy waste and food spoilage. With CoolKeeper, I can get notified via Telegram if the fridge is open too long. This helps conserve energy and prevent food loss.
+This device solves a common problem: accidentally leaving the fridge door open. When the door stays open longer than 20 seconds, CoolKeeper:
 
-- **Chosen for:** Simplicity, usefulness, and learning experience
-- **Purpose:** Detect fridge status and send real-time alerts
-- **Insights:** Understanding MicroPython, GPIO input/output, network communication, and automation
+- Sends a **Telegram alert**
+- Activates a **buzzer**
+- Turns on an **LED**
+
+It helps reduce power waste and keeps food fresh.
 
 ---
 
 ## Material
 
-| Component            | Function                          | Where bought    | Cost    |
-| -------------------- | --------------------------------- | --------------- | ------- |
-| Raspberry Pi Pico WH | Main microcontroller with Wi-Fi   | Electrokit.se   | 130 SEK |
-| LDR sensor           | Detects ambient light             | From sensor kit | 39 SEK       |
-| Active Buzzer               | Audio alert for fridge open state | From sensor kit | 32 SEK       |
-| LED                  | Visual indicator of door open     | From sensor kit | 20 SEK|        |
-| Push Button          | Toggle monitoring on/off          | From sensor kit | 19 SEK       |
-| Jumper wires         | Connections                       | From sensor kit | 35 SEK       |
-| Breadboard           | Prototyping platform              | From sensor kit | 69 SEK      |
-| Resistor      | Voltage divider with LDR, pull-up | From sensor kit  | 1  SEK     |
-*The LDR is connected to GP26 (ADC0), the LED to GP0, Buzzer to GP16, and the Button to GP17.*
-
-
+| Component                                       | Function                          | Where bought    | Cost    |
+|-------------------------------------------------|-----------------------------------| --------------- | ------- |
+| Raspberry Pi Pico WH ![Wiring](images/pico.png) | Main microcontroller with Wi-Fi   | Start Kit       | 130 SEK |
+| LDR sensor            ![Wiring](images/ldr.png) | Detects ambient light             | From sensor kit | 39 SEK  |
+| Active Buzzer      ![Wiring](images/buzzer.png) | Audio alert for fridge open state | From sensor kit | 32 SEK  |
+| LED                  ![Wiring](images/led.webp) | Visual indicator of door open     | Start Kit       | 20 SEK  |
+| Push Button        ![Wiring](images/button.png) | Toggle monitoring on/off          | From sensor kit | 19 SEK  |
+| Jumper wires        ![Wiring](images/wires.png) | Connections                       | Start Kit       | 35 SEK  |
+| Breadboard     ![Wiring](images/breadboard.png) | Prototyping platform              | Start Kit       | 69 SEK  |
+| Resistor         ![Wiring](images/resistor.png) | Voltage divider                   | Start Kit       | 1  SEK  |
 
 ---
 
@@ -44,30 +43,18 @@ I built this device to address a common issue: leaving the fridge door open. Ove
   - Install `urequests` manually if not pre-installed
   - Configure Wi-Fi credentials in the script
 
-- **Dependencies:** `network`, `urequests`, `machine`, `time`
+- **Dependencies:** `network`, `urequests`, `machine`, `time` , `utime`
 
 ---
 
 ## Putting everything together
 
-- LDR to GP26 (ADC input)
-- LED to GP0
-- Buzzer to GP16
-- Button to GP17 with pull-up resistor
-
-Below is a basic schematic:
-
-```text
-[LDR] ----- GP26
-   |
-[LED] ----- GP0
-[Buzzer] -- GP16
-[Button] -- GP17
-```
-
-> Resistors: The LDR is part of a voltage divider. The button uses internal pull-up.
-
-
+| Component       | GPIO Pin | Connection Details                                                                 |
+|----------------|----------|-------------------------------------------------------------------------------------|
+| **LDR Module** | GP26 (ADC0) | `VCC` → 3.3V, `GND` → GND, `OUT` → GP26 (ADC0). Includes built-in voltage divider|
+| **LED**        | GP0      | Anode → GP0 through a **220Ω resistor**, Cathode → GND                              |
+| **Buzzer**     | GP16     | Positive → GP16, Negative → GND                                                     |
+| **Button**     | GP17     | One leg → GP17, other leg → GND. Uses internal pull-up resistor                     |
 
 ---
 
@@ -83,56 +70,205 @@ I chose Telegram because:
 - Easy to set up
 - Fast and reliable notifications
 - Free and mobile-friendly
-- My familey uses it
+- My family uses it
 
 ---
 
 ## The code
 
-Core logic is in Python using MicroPython libraries:
+### My project consists of two files:
+
+### secrets.py
+This file stores my private credentials:
+```python
+# --- Wi-Fi Data ---
+SSID = "Your_WiFi_Name"
+PASSWORD = "Your_WiFi_Password"
+
+# --- Telegram Data ---
+TELEGRAM_BOT_TOKEN = 'your_telegram_bot_token'
+TELEGRAM_CHAT_ID = 12345  # Replace with your actual chat ID
+```
+Upload this file to the Pico WH first.
+
+### main.py
+
+We import essential MicroPython libraries and set up global credentials:
+
+- `machine`: Controls GPIO pins like ADC and digital I/O
+- `network`: Handles Wi-Fi connectivity
+- `urequests`: Sends HTTP requests (used for Telegram)
+- `time`: Used for second-based timing
+- `utime`: MicroPython-specific module used for millisecond precision
+- `secrets`: A custom file where Wi-Fi credentials and Telegram bot info are securely stored
+
+We also define global variables imported from `secrets.py`:
+
+- **Wi-Fi credentials**: `SSID`, `PASSWORD`
+- **Telegram Bot info**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 
 ```python
-if light_level <= THRESHOLD:
-    if not fridge_open:
-        open_start_time = current_time
-        fridge_open = True
-        send_telegram("Fridge opened.")
-    elif current_time - open_start_time >= 5:
-        send_telegram("Fridge open > 5s")
-        buzzer.on()
-else:
-    fridge_open = False
-    buzzer.off()
-    send_telegram("Fridge closed.")
+from machine import ADC, Pin
+import time
+import network
+import urequests
+import utime
+import secrets
+
+
+# --- Wi-Fi Data ---
+SSID = secrets.SSID
+PASSWORD = secrets.PASSWORD
+
+# --- Telegram Data ---
+TELEGRAM_BOT_TOKEN = secrets.TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID = secrets.TELEGRAM_CHAT_ID
 ```
 
-Highlights:
+### Hardware Setup
+Each component is connected to a specific GPIO pin. Pull-up and analog configurations are applied here.
+```python
+ldr = ADC(0)
+led = Pin(0, Pin.OUT)
+buzzer = Pin(16, Pin.OUT)
+button = Pin(17, Pin.IN, Pin.PULL_UP)
+```
 
-- LDR detects light inside fridge
-- Sends alert when door is open > 5 seconds
-- Buzzer sounds and LED lights up
-- Push button toggles system on/off
-- Telegram bot sends status messages
+### State Variables
+State variables help track fridge status, alert state, and timing of events.
+```python
+fridge_open = False           # Tracks if fridge is currently open
+open_start_time = None        # Timestamp when fridge was opened
+alert_sent = False            # Tracks if Telegram alert was sent
+monitoring = False            # Indicates whether monitoring is active
+last_beep_time = 0            # For periodic beeping of buzzer
+fridge_warning_sent = False   # True if fridge open warning has already been sent
+was_paused = True             # Used to detect state change from active to paused
+toggle_message = None         # Stores message to send when toggling state
+last_press_time = 0           # For button debounce timing
 
----
+THRESHOLD = 500               # LDR threshold (if < 500 fridge is open)
+```
 
-## Transmitting the data / connectivity
+### Connecting to Wi-Fi
+This function connects your Raspberry Pi Pico WH to a Wi-Fi network using stored credentials.
+```python
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(SSID, PASSWORD)
+    print("Connecting to Wi-Fi...", end="")
+    while not wlan.isconnected():
+      print(".", end="")
+      time.sleep(1)
+    print("\nConnected, IP:", wlan.ifconfig()[0])
+    send_telegram("CoolKeeper connected to Wi-Fi")
+```
 
-- **Wi-Fi Protocol:** 802.11n (via Pico WH)
-- **Transport Protocol:** HTTPS (via Telegram Bot API)
-- **Update Frequency:** Every second (within main loop)
-
+### Sending Telegram Alerts
+This function handles sending messages to a Telegram chat using your bot token and chat ID.
 ```python
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    urequests.post(url, json={'chat_id': CHAT_ID, 'text': message})
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {'chat_id': TELEGRAM_CHAT_ID, 'text': message}
+    try:
+        r = urequests.post(url, json=data)
+        r.close()
+        del r
+    except Exception as e:
+        print("Telegram send error:", e)
 ```
 
-- Light data is not stored, only status changes are sent
-- Telegram is used due to its simplicity and instant delivery
-- Could be optimized to reduce power use with sleep modes
+### Button Interrupt Handler
+Toggles monitoring mode on or off when the button is pressed. Also handles resetting alert states and components.
+```python
+def button_pressed(pin):
+    global monitoring, fridge_open, open_start_time, alert_sent
+    global was_paused, toggle_message, last_press_time
+    
+    current_time = utime.ticks_ms()
+    if utime.ticks_diff(current_time, last_press_time) > 300:
+        last_press_time = current_time
+        monitoring = not monitoring
+        if monitoring:
+            toggle_message = "Monitoring started. Press the button to pause"
+            was_paused = False
+        else:
+            toggle_message = "Monitoring paused. Press the button to resume"
+            fridge_open = False
+            open_start_time = None
+            alert_sent = False
+            led.off()
+            buzzer.off()
+```
 
----
+Button Interrupt Setup
+```python
+button.irq(trigger=Pin.IRQ_FALLING, handler=button_pressed)
+```
+
+### Initial Setup
+Connects to Wi-Fi and sends a startup message. This is the first step before the monitoring loop begins.
+```python
+connect_wifi()
+send_telegram("Press the button to start monitoring")
+```
+
+### Main Loop
+This is the core logic that runs repeatedly. It checks the light level, determines fridge status, and sends alerts.
+```python
+while True:
+  if toggle_message:
+    print(toggle_message)
+    send_telegram(toggle_message)
+    toggle_message = None
+
+  if monitoring:
+    light_level = ldr.read_u16() // 64
+    print("Light level:", light_level)
+    current_time = time.time()
+
+    if light_level <= THRESHOLD:
+      if not fridge_open:
+        print("Fridge OPEN")
+        open_start_time = current_time
+        fridge_open = True
+        alert_sent = False
+        last_beep_time = 0
+        led.on()
+
+      elif open_start_time is not None and current_time - open_start_time >= 20:
+        if not alert_sent:
+          send_telegram("Warning: Fridge open more than 20 seconds!")
+          alert_sent = True
+          fridge_warning_sent = True
+          last_beep_time = current_time
+
+        if current_time - last_beep_time >= 1:
+          buzzer.on()
+          time.sleep(0.1)
+          buzzer.off()
+          last_beep_time = current_time
+
+    else:
+      if fridge_open:
+        print("Fridge CLOSED")
+        fridge_open = False
+        open_start_time = None
+        alert_sent = False
+        led.off()
+        buzzer.off()
+        if fridge_warning_sent:
+          send_telegram("Fridge has been closed")
+          fridge_warning_sent = False
+  else:
+    led.toggle()
+    time.sleep(0.5)
+    if not was_paused:
+      was_paused = True
+
+  time.sleep(1)
+```
 
 ## Presenting the data
 
@@ -147,10 +283,11 @@ Sample Telegram messages:
 
 ```
 CoolKeeper connected to Wi-Fi.
-CoolKeeper monitoring started.
-CoolKeeper Warning: Fridge open more than 5 seconds!
-CoolKeeper Warning: Fridge open more than 5 seconds!
-CoolKeeper monitoring paused.
+Press the button to start monitoring
+Monitoring started. Press the button to pause
+Warning: Fridge open more than 20 seconds!
+Fridge has been closed
+Monitoring paused. Press the button to resume
 ```
 
 ---
@@ -166,13 +303,20 @@ Below is the final project in action:
 ---
 
 ## Conclusion
+CoolKeeper successfully:
+- Detects fridge door status
+- Sends Telegram alerts
+- Notifies with buzzer and LED
+- Lets you pause/resume monitoring with a button
 
-- The project worked as intended
-- Telegram integration was smooth
-- Could be improved with:
-  - Power saving modes
-  - Battery operation
-  - Dashboard integration (Ubidots)
-  - Case/enclosure for safety
+It was a great learning experience in:
+- MicroPython programming
+- Wi-Fi and API integration
+- Interrupts and sensor logic on embedded devices
 
+Future Improvements
+- Integrate with Ubidots for online dashboard
+- Add temperature sensor for full fridge status
+- Use a low-power mode to conserve energy
+- Add battery backup (e.g., LiPo with charging circuit)
 
