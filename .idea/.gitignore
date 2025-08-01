@@ -1,3 +1,4 @@
+/secrets.py
 # Default ignored files
 /shelf/
 /workspace.xml
@@ -11,4 +12,3 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
-/secrets.py
