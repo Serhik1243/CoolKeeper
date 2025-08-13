@@ -14,6 +14,9 @@ PASSWORD = secrets.PASSWORD
 TELEGRAM_BOT_TOKEN = secrets.TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID = secrets.TELEGRAM_CHAT_ID
 
+# --- Datacake URL ---
+DATACAKE_URL = secrets.DATACAKE_URL
+
 # --- Pins Setup ---
 ldr = ADC(0)  # GP26
 led = Pin(0, Pin.OUT)
@@ -31,7 +34,14 @@ was_paused = True             # Used to detect state change from active to pause
 toggle_message = None         # Stores message to send when toggling state
 last_press_time = 0           # For button debounce timing
 
+# --- Stats ---
+open_times = 0
+long_open_times = 0
+open_duration = 0
+
+# --- Constants ---
 THRESHOLD = 500               # LDR threshold (if < 500 fridge is open)
+SEND_INTERVAL = 30
 
 
 # --- Wi-Fi Connect ---
@@ -84,9 +94,29 @@ def button_pressed(pin):
 # --- Setup Button Interrupt ---
 button.irq(trigger=Pin.IRQ_FALLING, handler=button_pressed)
 
+
+# --- Send to Datacake ---
+def send_to_datacake(open_times, long_open_times, open_duration):
+    payload = {
+        "device": "CoolKeeper",
+        "OPEN_TIMES": open_times,
+        "LONG_OPEN_TIMES": long_open_times,
+        "OPEN_DURATION": open_duration
+    }
+    try:
+        r = urequests.post(DATACAKE_URL, json=payload)
+        print("Datacake response:", r.text)
+        r.close()
+        print("Data sent to Datacake:", payload)
+    except Exception as e:
+        print("Datacake send error:", e)
+
+
 # --- Main Program ---
 connect_wifi()
 send_telegram("Press the button to start monitoring")
+
+last_datacake_send = time.time()
 
 while True:
     # If user toggled button
@@ -100,11 +130,16 @@ while True:
         print("Light level:", light_level)
         current_time = time.time()
 
+        # Count open seconds
+        if fridge_open and open_start_time is not None:
+            open_duration += 1
+
         # --- Fridge is open ---
         if light_level <= THRESHOLD:
             # First time detecting fridge open
             if not fridge_open:
                 print("Fridge OPEN")
+                open_times += 1
                 open_start_time = current_time
                 fridge_open = True
                 alert_sent = False
@@ -116,6 +151,7 @@ while True:
                 # Send warning once
                 if not alert_sent:
                     send_telegram("Warning: Fridge open more than 20 seconds!")
+                    long_open_times += 1
                     alert_sent = True
                     fridge_warning_sent = True
                     last_beep_time = current_time
@@ -146,6 +182,14 @@ while True:
         time.sleep(0.5)
         if not was_paused:
             was_paused = True
+
+    # --- Send stats to Datacake every 30 seconds ---
+    if time.time() - last_datacake_send >= SEND_INTERVAL:
+        send_to_datacake(open_times, long_open_times, open_duration)
+        open_times = 0
+        long_open_times = 0
+        open_duration = 0
+        last_datacake_send = time.time()
 
     # loop delay
     time.sleep(1)
