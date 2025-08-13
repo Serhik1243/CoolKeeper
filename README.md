@@ -41,7 +41,7 @@ It helps reduce power waste and keeps food fresh.
 
   - Install MicroPython firmware on Pico WH
   - Install `urequests` manually if not pre-installed
-  - Configure Wi-Fi credentials in the script
+  - Configure Wi-Fi, telegram bot and datacake url credentials in the script
 
 - **Dependencies:** `network`, `urequests`, `machine`, `time` , `utime`
 
@@ -88,6 +88,8 @@ PASSWORD = "Your_WiFi_Password"
 # --- Telegram Data ---
 TELEGRAM_BOT_TOKEN = 'your_telegram_bot_token'
 TELEGRAM_CHAT_ID = 12345  # Replace with your actual chat ID
+# --- Datacake URL ---
+DATACAKE_URL = "https://api.datacake.co/integrations/api/your_datacake_api_key/"
 ```
 Upload this file to the Pico WH first.
 
@@ -106,7 +108,7 @@ We also define global variables imported from `secrets.py`:
 
 - **Wi-Fi credentials**: `SSID`, `PASSWORD`
 - **Telegram Bot info**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
-
+- **DataCake**: `DATACAKE_URL`
 ```python
 from machine import ADC, Pin
 import time
@@ -123,6 +125,9 @@ PASSWORD = secrets.PASSWORD
 # --- Telegram Data ---
 TELEGRAM_BOT_TOKEN = secrets.TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID = secrets.TELEGRAM_CHAT_ID
+
+# --- Datacake URL ---
+DATACAKE_URL = secrets.DATACAKE_URL
 ```
 
 ### Hardware Setup
@@ -147,7 +152,13 @@ was_paused = True             # Used to detect state change from active to pause
 toggle_message = None         # Stores message to send when toggling state
 last_press_time = 0           # For button debounce timing
 
-THRESHOLD = 500               # LDR threshold (if < 500 fridge is open)
+# --- Stats ---
+open_times = 0
+long_open_times = 0
+open_duration = 0
+
+THRESHOLD = 500               # LDR threshold 
+SEND_INTERVAL = 30
 ```
 
 ### Connecting to Wi-Fi
@@ -206,80 +217,117 @@ Button Interrupt Setup
 ```python
 button.irq(trigger=Pin.IRQ_FALLING, handler=button_pressed)
 ```
+### DataCake sender
+Send statistic in json format to DataCake for visualization
+```python
+def send_to_datacake(open_times, long_open_times, open_duration):
+    payload = {
+        "device": "CoolKeeper",
+        "OPEN_TIMES": open_times,
+        "LONG_OPEN_TIMES": long_open_times,
+        "OPEN_DURATION": open_duration
+    }
+    try:
+        r = urequests.post(DATACAKE_URL, json=payload)
+        print("Datacake response:", r.text)
+        r.close()
+        print("Data sent to Datacake:", payload)
+    except Exception as e:
+        print("Datacake send error:", e)
+```
 
 ### Initial Setup
 Connects to Wi-Fi and sends a startup message. This is the first step before the monitoring loop begins.
 ```python
 connect_wifi()
 send_telegram("Press the button to start monitoring")
+last_datacake_send = time.time()
 ```
 
 ### Main Loop
 This is the core logic that runs repeatedly. It checks the light level, determines fridge status, and sends alerts.
 ```python
 while True:
-  if toggle_message:
-    print(toggle_message)
-    send_telegram(toggle_message)
-    toggle_message = None
+    if toggle_message:
+        print(toggle_message)
+        send_telegram(toggle_message)
+        toggle_message = None
 
-  if monitoring:
-    light_level = ldr.read_u16() // 64
-    print("Light level:", light_level)
-    current_time = time.time()
+    if monitoring:
+        light_level = ldr.read_u16() // 64
+        print("Light level:", light_level)
+        current_time = time.time()
 
-    if light_level <= THRESHOLD:
-      if not fridge_open:
-        print("Fridge OPEN")
-        open_start_time = current_time
-        fridge_open = True
-        alert_sent = False
-        last_beep_time = 0
-        led.on()
+        if fridge_open and open_start_time is not None:
+            open_duration += 1
 
-      elif open_start_time is not None and current_time - open_start_time >= 20:
-        if not alert_sent:
-          send_telegram("Warning: Fridge open more than 20 seconds!")
-          alert_sent = True
-          fridge_warning_sent = True
-          last_beep_time = current_time
+        # --- Fridge is open ---
+        if light_level <= THRESHOLD:
+            if not fridge_open:
+                print("Fridge OPEN")
+                open_times += 1
+                open_start_time = current_time
+                fridge_open = True
+                alert_sent = False
+                last_beep_time = 0
+                led.on()
 
-        if current_time - last_beep_time >= 1:
-          buzzer.on()
-          time.sleep(0.1)
-          buzzer.off()
-          last_beep_time = current_time
+            elif open_start_time is not None and current_time - open_start_time >= 20:
+                if not alert_sent:
+                    send_telegram("Warning: Fridge open more than 20 seconds!")
+                    long_open_times += 1
+                    alert_sent = True
+                    fridge_warning_sent = True
+                    last_beep_time = current_time
 
+                if current_time - last_beep_time >= 1:
+                    buzzer.on()
+                    time.sleep(0.1)
+                    buzzer.off()
+                    last_beep_time = current_time
+
+        # --- Fridge is closed again ---
+        else:
+            if fridge_open:
+                print("Fridge CLOSED")
+                fridge_open = False
+                open_start_time = None
+                alert_sent = False
+                led.off()
+                buzzer.off()
+                if fridge_warning_sent:
+                    send_telegram("Fridge has been closed")
+                    fridge_warning_sent = False
     else:
-      if fridge_open:
-        print("Fridge CLOSED")
-        fridge_open = False
-        open_start_time = None
-        alert_sent = False
-        led.off()
-        buzzer.off()
-        if fridge_warning_sent:
-          send_telegram("Fridge has been closed")
-          fridge_warning_sent = False
-  else:
-    led.toggle()
-    time.sleep(0.5)
-    if not was_paused:
-      was_paused = True
+        led.toggle()
+        time.sleep(0.5)
+        if not was_paused:
+            was_paused = True
 
-  time.sleep(1)
+    # --- Send stats to Datacake every 30 seconds ---
+    if time.time() - last_datacake_send >= SEND_INTERVAL:
+        send_to_datacake(open_times, long_open_times, open_duration)
+        open_times = 0
+        long_open_times = 0
+        open_duration = 0
+        last_datacake_send = time.time()
+
+    time.sleep(1)
 ```
 
 ## Presenting the data
+### Dashboard(Datacake):
 
-No dashboard in this version; alerts are sent to Telegram
+CoolKeeper logs fridge activity to Datacake for live and historical tracking
 
-Possible to integrate with:
+The dashboard shows:
+- open_times – Number of times the fridge was opened
+- long_open_times – Times the fridge stayed open longer than 20 seconds
+- open_duration – Duration (in seconds) for each fridge open event
 
-- Ubidots (for dashboards and analytics)
-- Blynk or Node-RED in future
+![Data](images/data.png)
 
-Sample Telegram messages:
+### Sample Telegram messages:
 
 ```
 CoolKeeper connected to Wi-Fi.
@@ -313,9 +361,9 @@ It was a great learning experience in:
 - MicroPython programming
 - Wi-Fi and API integration
 - Interrupts and sensor logic on embedded devices
+- Data visualization using DataCake
 
 Future Improvements
-- Integrate with Ubidots for online dashboard
 - Add temperature sensor for full fridge status
 - Use a low-power mode to conserve energy
 - Add battery backup (e.g., LiPo with charging circuit)
